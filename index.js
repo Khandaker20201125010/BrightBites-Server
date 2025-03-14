@@ -1,6 +1,7 @@
 const express  = require('express')
 const app = express()
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 require('dotenv').config()
 const port = process.env.PORT || 5000
 
@@ -28,11 +29,13 @@ async function run() {
     // await client.connect();
     // Send a ping to confirm a successful connection
     const  usersCollection = client.db("BrightBites").collection("users");
+    const  doctorCollection = client.db("BrightBites").collection("doctors");
 
     app.get('/users', async(req, res) => {
         const result = await usersCollection.find().toArray();
         res.send(result)
     })
+
     app.get('/users/:email', async (req, res) => {
         const email = req.params.email
         const query = { email: email }
