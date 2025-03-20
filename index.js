@@ -30,6 +30,8 @@ async function run() {
     // Send a ping to confirm a successful connection
     const usersCollection = client.db("BrightBites").collection("users");
     const doctorCollection = client.db("BrightBites").collection("doctors");
+    const appointmentCollection = client.db("BrightBites").collection("appointments");
+    const bookingsCollection = client.db('BrightBites').collection('bookings');
     //jwt related api
     app.post('/jwt', async (req, res) => {
       const user = req.body;
@@ -103,12 +105,94 @@ async function run() {
       const result = await doctorCollection.find().toArray();
       res.send(result)
     })
-   
-    app.post('/doctors',verifyToken,verifyAdmin, async (req, res) => {
+
+    app.post('/doctors', verifyToken, verifyAdmin, async (req, res) => {
       const doctor = req.body;
       const result = await doctorCollection.insertOne(doctor);
       res.send(result);
     })
+    app.get('/appointments', async (req, res) => {
+      const result = await appointmentCollection.find().toArray();
+      res.send(result)
+    })
+
+    app.post('/appointments', verifyToken, verifyAdmin, async (req, res) => {
+      const appointment = req.body;
+      const result = await appointmentCollection.insertOne(appointment);
+      res.send(result);
+    })
+    app.get('/appointments', async (req, res) => {
+      const date = req.query.date;
+      const query = {};
+      const options = await appointmentCollection.find(query).toArray();
+
+      // get the bookings of the provided date
+      const bookingQuery = { appointmentDate: date }
+      const alreadyBooked = await bookingsCollection.find(bookingQuery).toArray();
+
+      // code carefully :D
+      options.forEach(option => {
+        const optionBooked = alreadyBooked.filter(book => book.treatment === option.name);
+        const bookedSlots = optionBooked.map(book => book.slot);
+        const remainingSlots = option.slots.filter(slot => !bookedSlots.includes(slot))
+        option.slots = remainingSlots;
+      })
+      res.send(options);
+    });
+    app.get('/bookings', verifyToken, async (req, res) => {
+      const email = req.query.email;
+      const decodedEmail = req.decoded.email;
+
+      if (email !== decodedEmail) {
+        return res.status(403).send({ message: 'forbidden access' });
+      }
+
+      const query = { email: email };
+      const bookings = await bookingsCollection.find(query).toArray();
+      res.send(bookings);
+    });
+
+    app.get('/bookings/:id', async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: ObjectId(id) };
+      const booking = await bookingsCollection.findOne(query);
+      res.send(booking);
+    })
+
+    app.post('/bookings', async (req, res) => {
+      try {
+          const booking = req.body;
+          
+          // Check if the user already booked this slot
+          const query = {
+              appointmentDate: booking.appointmentDate,
+              email: booking.email,
+              treatment: booking.treatment,
+          };
+          
+          const alreadyBooked = await bookingsCollection.find(query).toArray();
+          if (alreadyBooked.length) {
+              return res.send({ acknowledged: false, message: `You already have a booking on ${booking.appointmentDate}` });
+          }
+  
+          // Insert new booking
+          const result = await bookingsCollection.insertOne(booking);
+  
+          // Remove the booked slot from the appointments collection
+          const filter = { name: booking.treatment }; // Find the correct appointment
+          const updateDoc = {
+              $pull: { slots: booking.slot }, // Remove the booked slot
+          };
+  
+          await appointmentCollection.updateOne(filter, updateDoc);
+  
+          res.send(result);
+      } catch (error) {
+          console.error("Booking Error:", error);
+          res.status(500).send({ message: "Internal server error" });
+      }
+  });
+  
 
 
 
