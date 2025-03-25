@@ -41,18 +41,18 @@ async function run() {
 
     const verifyToken = (req, res, next) => {
       if (!req.headers.authorization) {
-        return res.status(401).send({ message: 'unauthorized access' })
+        return res.status(401).send({ message: 'Forbidden access' });
       }
       const token = req.headers.authorization.split(' ')[1];
-
       jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
         if (err) {
-          return res.status(401).send({ message: 'unauthorized access' })
+          return res.status(401).send({ message: 'Forbidden access' })
         }
         req.decoded = decoded;
         next();
       })
     }
+
     const verifyAdmin = async (req, res, next) => {
       const email = req.decoded.email;
       const query = { email: email }
@@ -99,7 +99,7 @@ async function run() {
       const updateDoc = {
         $set: { role: role },
       };
-    
+
       const result = await usersCollection.updateOne(filter, updateDoc);
       res.send(result);
     });
@@ -183,38 +183,38 @@ async function run() {
 
     app.post('/bookings', async (req, res) => {
       try {
-          const booking = req.body;
-          
-          // Check if the user already booked this slot
-          const query = {
-              appointmentDate: booking.appointmentDate,
-              email: booking.email,
-              treatment: booking.treatment,
-          };
-          
-          const alreadyBooked = await bookingsCollection.find(query).toArray();
-          if (alreadyBooked.length) {
-              return res.send({ acknowledged: false, message: `You already have a booking on ${booking.appointmentDate}` });
-          }
-  
-          // Insert new booking
-          const result = await bookingsCollection.insertOne(booking);
-  
-          // Remove the booked slot from the appointments collection
-          const filter = { name: booking.treatment }; // Find the correct appointment
-          const updateDoc = {
-              $pull: { slots: booking.slot }, // Remove the booked slot
-          };
-  
-          await appointmentCollection.updateOne(filter, updateDoc);
-  
-          res.send(result);
+        const booking = req.body;
+
+        // Check if the user already booked this slot
+        const query = {
+          appointmentDate: booking.appointmentDate,
+          email: booking.email,
+          treatment: booking.treatment,
+        };
+
+        const alreadyBooked = await bookingsCollection.find(query).toArray();
+        if (alreadyBooked.length) {
+          return res.send({ acknowledged: false, message: `You already have a booking on ${booking.appointmentDate}` });
+        }
+
+        // Insert new booking
+        const result = await bookingsCollection.insertOne(booking);
+
+        // Remove the booked slot from the appointments collection
+        const filter = { name: booking.treatment }; // Find the correct appointment
+        const updateDoc = {
+          $pull: { slots: booking.slot }, // Remove the booked slot
+        };
+
+        await appointmentCollection.updateOne(filter, updateDoc);
+
+        res.send(result);
       } catch (error) {
-          console.error("Booking Error:", error);
-          res.status(500).send({ message: "Internal server error" });
+        console.error("Booking Error:", error);
+        res.status(500).send({ message: "Internal server error" });
       }
-  });
-  
+    });
+
 
 
 
