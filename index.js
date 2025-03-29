@@ -33,6 +33,7 @@ async function run() {
     const doctorCollection = client.db("BrightBites").collection("doctors");
     const appointmentCollection = client.db("BrightBites").collection("appointments");
     const bookingsCollection = client.db('BrightBites').collection('bookings');
+    const paymentCollection = client.db('BrightBites').collection('payments');
     //jwt related api
     app.post('/jwt', async (req, res) => {
       const user = req.body;
@@ -217,7 +218,7 @@ async function run() {
     });
 
     // payment related api
-    app.post ('/create-payment-intent', async (req, res) => {
+    app.post('/create-payment-intent', async (req, res) => {
       const { price } = req.body;
       const amount = parseInt(price * 100);
       const paymentIntent = await stripe.paymentIntents.create({
@@ -227,8 +228,39 @@ async function run() {
       });
       res.send({ clientSecret: paymentIntent.client_secret });
     })
+    app.get('/payments/:email', verifyToken, async (req, res) => {
+      const userEmail = req.params.email;
+    
+      if (userEmail !== req.decoded.email) {
+        return res.status(403).send({ message: 'Unauthorized access' });
+      }
+    
+      try {
+        const query = { email: userEmail };
+        const payments = await paymentCollection.find(query).toArray();
+        res.send(payments); // Ensure transactionId is part of each payment object
+      } catch (error) {
+        console.error("Error fetching payments:", error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+    
 
-
+    app.post('/payments', async (req, res) => {
+      try {
+        const { email, price, date, bookingIds, status, transactionId } = req.body;
+        
+        const payment = { email, price, date, bookingIds, status, transactionId };
+        const paymentResult = await paymentCollection.insertOne(payment);
+        
+        res.send({ success: true, paymentResult });
+      } catch (error) {
+        console.error("Error processing payment:", error);
+        res.status(500).send({ success: false, message: "Payment processing failed" });
+      }
+    });
+    
+    
 
 
 
