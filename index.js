@@ -34,6 +34,7 @@ async function run() {
     const appointmentCollection = client.db("BrightBites").collection("appointments");
     const bookingsCollection = client.db('BrightBites').collection('bookings');
     const paymentCollection = client.db('BrightBites').collection('payments');
+    const reviewsCollection = client.db('BrightBites').collection('reviews');
     //jwt related api
     app.post('/jwt', async (req, res) => {
       const user = req.body;
@@ -216,6 +217,50 @@ async function run() {
         res.status(500).send({ message: "Internal server error" });
       }
     });
+    app.get("/reviews", async (req, res) => {
+      try {
+        const { email } = req.query; // Get user email from query parameters
+
+        let query = {};
+        if (email) {
+          query.email = email; // Filter reviews by user's email
+        }
+
+        const reviews = await reviewsCollection.find(query).toArray();
+        res.json(reviews);
+      } catch (error) {
+        res.status(500).json({ message: "Failed to fetch reviews", error: error.message });
+      }
+    });
+
+    app.post("/reviews", async (req, res) => {
+      try {
+        const review = req.body;
+        const result = await reviewsCollection.insertOne(review);
+        res.status(201).json({ success: true, message: "Review added successfully", data: result });
+      } catch (error) {
+        res.status(500).json({ success: false, message: "Failed to add review", error: error.message });
+      }
+    });
+    app.patch("/reviews/:id", async (req, res) => {
+      try {
+          const { id } = req.params;
+          const { review } = req.body;
+  
+          const result = await reviewsCollection.updateOne(
+              { _id: new ObjectId(id) },
+              { $set: { review } }
+          );
+  
+          if (result.modifiedCount === 0) {
+              return res.status(404).json({ success: false, message: "Review not found or unchanged." });
+          }
+  
+          res.json({ success: true, message: "Review updated successfully." });
+      } catch (error) {
+          res.status(500).json({ success: false, message: "Failed to update review", error: error.message });
+      }
+  });
 
     // payment related api
     app.post('/create-payment-intent', async (req, res) => {
@@ -230,11 +275,11 @@ async function run() {
     })
     app.get('/payments/:email', verifyToken, async (req, res) => {
       const userEmail = req.params.email;
-    
+
       if (userEmail !== req.decoded.email) {
         return res.status(403).send({ message: 'Unauthorized access' });
       }
-    
+
       try {
         const query = { email: userEmail };
         const payments = await paymentCollection.find(query).toArray();
@@ -244,23 +289,35 @@ async function run() {
         res.status(500).send({ message: "Server error" });
       }
     });
-    
+
 
     app.post('/payments', async (req, res) => {
       try {
         const { email, price, date, bookingIds, status, transactionId } = req.body;
-        
+
         const payment = { email, price, date, bookingIds, status, transactionId };
         const paymentResult = await paymentCollection.insertOne(payment);
-        
-        res.send({ success: true, paymentResult });
+
+        if (paymentResult.insertedId) {
+          // Delete the booking after payment
+          const deleteResult = await bookingsCollection.deleteOne({ _id: new ObjectId(bookingIds[0]) });
+
+          if (deleteResult.deletedCount === 1) {
+            res.send({ success: true, paymentResult, message: "Payment successful and booking deleted." });
+          } else {
+            res.send({ success: false, message: "Payment successful, but booking deletion failed." });
+          }
+        } else {
+          res.send({ success: false, message: "Payment processing failed." });
+        }
       } catch (error) {
         console.error("Error processing payment:", error);
         res.status(500).send({ success: false, message: "Payment processing failed" });
       }
     });
-    
-    
+
+
+
 
 
 
