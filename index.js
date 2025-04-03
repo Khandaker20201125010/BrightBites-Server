@@ -187,51 +187,54 @@ async function run() {
     app.post('/bookings', async (req, res) => {
       try {
         const booking = req.body;
-
+    
         // Check if the user already booked this slot
         const query = {
           appointmentDate: booking.appointmentDate,
           email: booking.email,
-          treatment: booking.treatment,
+          treatment: booking.treatment,  // This should match the field in the frontend
         };
-
+    
         const alreadyBooked = await bookingsCollection.find(query).toArray();
         if (alreadyBooked.length) {
           return res.send({ acknowledged: false, message: `You already have a booking on ${booking.appointmentDate}` });
         }
-
+    
         // Insert new booking
         const result = await bookingsCollection.insertOne(booking);
-
-        // Remove the booked slot from the appointments collection
-        const filter = { name: booking.treatment }; // Find the correct appointment
+    
+        // Correct: Find the appointment by the 'appointment' field, not 'name'
+        const filter = { appointment: booking.treatment };  // Using 'appointment' instead of 'name'
         const updateDoc = {
-          $pull: { slots: booking.slot }, // Remove the booked slot
+          $pull: { slots: booking.slot },  // Remove the booked slot
         };
-
+    
+        // Update the appointment document to remove the booked slot
         await appointmentCollection.updateOne(filter, updateDoc);
-
+    
         res.send(result);
       } catch (error) {
         console.error("Booking Error:", error);
         res.status(500).send({ message: "Internal server error" });
       }
     });
+    
+
     app.get("/reviews", async (req, res) => {
       try {
         const { email } = req.query; // Get user email from query parameters
-
         let query = {};
         if (email) {
           query.email = email; // Filter reviews by user's email
         }
 
-        const reviews = await reviewsCollection.find(query).toArray();
-        res.json(reviews);
+        const reviews = await reviewsCollection.find(query).toArray(); // MongoDB query
+        res.json(reviews); // Return the reviews
       } catch (error) {
         res.status(500).json({ message: "Failed to fetch reviews", error: error.message });
       }
     });
+
 
     app.post("/reviews", async (req, res) => {
       try {
@@ -244,23 +247,23 @@ async function run() {
     });
     app.patch("/reviews/:id", async (req, res) => {
       try {
-          const { id } = req.params;
-          const { review } = req.body;
-  
-          const result = await reviewsCollection.updateOne(
-              { _id: new ObjectId(id) },
-              { $set: { review } }
-          );
-  
-          if (result.modifiedCount === 0) {
-              return res.status(404).json({ success: false, message: "Review not found or unchanged." });
-          }
-  
-          res.json({ success: true, message: "Review updated successfully." });
+        const { id } = req.params;
+        const { review } = req.body;
+
+        const result = await reviewsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { review } }
+        );
+
+        if (result.modifiedCount === 0) {
+          return res.status(404).json({ success: false, message: "Review not found or unchanged." });
+        }
+
+        res.json({ success: true, message: "Review updated successfully." });
       } catch (error) {
-          res.status(500).json({ success: false, message: "Failed to update review", error: error.message });
+        res.status(500).json({ success: false, message: "Failed to update review", error: error.message });
       }
-  });
+    });
 
     // payment related api
     app.post('/create-payment-intent', async (req, res) => {
@@ -295,7 +298,24 @@ async function run() {
       try {
         const { email, price, date, bookingIds, status, transactionId } = req.body;
 
-        const payment = { email, price, date, bookingIds, status, transactionId };
+        // Fetch booking details before deletion
+        const booking = await bookingsCollection.findOne({ _id: new ObjectId(bookingIds[0]) });
+
+        if (!booking) {
+          return res.status(404).send({ success: false, message: "Booking not found." });
+        }
+
+        // Store payment along with treatment details
+        const payment = {
+          email,
+          price,
+          date,
+          status,
+          transactionId,
+          treatment: booking.treatment,  // Store treatment name
+          doctor: booking.doctor,        // Store doctor name if available
+        };
+
         const paymentResult = await paymentCollection.insertOne(payment);
 
         if (paymentResult.insertedId) {
@@ -303,7 +323,7 @@ async function run() {
           const deleteResult = await bookingsCollection.deleteOne({ _id: new ObjectId(bookingIds[0]) });
 
           if (deleteResult.deletedCount === 1) {
-            res.send({ success: true, paymentResult, message: "Payment successful and booking deleted." });
+            res.send({ success: true, message: "Payment successful and booking deleted." });
           } else {
             res.send({ success: false, message: "Payment successful, but booking deletion failed." });
           }
@@ -315,6 +335,62 @@ async function run() {
         res.status(500).send({ success: false, message: "Payment processing failed" });
       }
     });
+
+    app.get('/dashboard-stats', async (req, res) => {
+      try {
+        const [revenueResult, totalAppointments, totalPayments] = await Promise.all([
+          paymentCollection.aggregate([
+            {
+              $group: {
+                _id: null,
+                totalRevenue: { $sum: { $toDouble: "$price" } }
+              }
+            }
+          ]).toArray(),
+          bookingsCollection.countDocuments(),
+          paymentCollection.countDocuments() // Get total number of payments
+        ]);
+
+        const totalRevenue = revenueResult.length ? revenueResult[0].totalRevenue : 0;
+
+        res.send({
+          totalRevenue,
+          totalAppointments,
+          totalPayments // Add totalPayments to the response
+        });
+      } catch (error) {
+        res.status(500).send({ message: "Error fetching dashboard stats", error: error.message });
+      }
+    });
+    app.get('/revenue-per-treatment', async (req, res) => {
+      try {
+        const revenueData = await paymentCollection.aggregate([
+          {
+            $group: {
+              _id: "$treatment",   // Group by treatment
+              totalRevenue: { $sum: { $toDouble: "$price" } }, // Sum the prices for each treatment
+              totalBookings: { $sum: 1 } // Count the number of bookings for each treatment
+            }
+          },
+          {
+            $sort: { totalRevenue: -1 } // Optional: Sort by total revenue, descending
+          }
+        ]).toArray();
+    
+        res.send(revenueData); // Send the revenue data for each treatment
+      } catch (error) {
+        console.error("Error calculating revenue:", error);
+        res.status(500).send({ message: "Error calculating revenue", error: error.message });
+      }
+    });
+    
+
+
+
+
+
+
+
 
 
 
