@@ -81,6 +81,7 @@ async function run() {
     })
     app.post('/users', async (req, res) => {
       const user = req.body;
+      
       const query = { email: user.email }
       const existsUser = await usersCollection.findOne(query);
       if (existsUser) {
@@ -336,32 +337,37 @@ async function run() {
       }
     });
 
-    app.get('/dashboard-stats', async (req, res) => {
-      try {
-        const [revenueResult, totalAppointments, totalPayments] = await Promise.all([
-          paymentCollection.aggregate([
-            {
-              $group: {
-                _id: null,
-                totalRevenue: { $sum: { $toDouble: "$price" } }
-              }
-            }
-          ]).toArray(),
-          bookingsCollection.countDocuments(),
-          paymentCollection.countDocuments() // Get total number of payments
-        ]);
+// Add the aggregate pipeline for total revenue, total appointments, and total payments
+app.get('/dashboard-stats', async (req, res) => {
+  try {
+    const [revenueResult, totalAppointments, totalPayments] = await Promise.all([
+      paymentCollection.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: { $toDouble: "$price" } } // Sum up the price field for total revenue
+          }
+        }
+      ]).toArray(),
+      
+      appointmentCollection.countDocuments({}), // Get total number of appointments
+      paymentCollection.countDocuments({ status: 'paid' }) // Get total number of paid appointments
+    ]);
 
-        const totalRevenue = revenueResult.length ? revenueResult[0].totalRevenue : 0;
+    const totalRevenue = revenueResult[0]?.totalRevenue || 0;
+    const stats = {
+      totalRevenue,
+      totalAppointments: totalAppointments,
+      totalPayments: totalPayments
+    };
 
-        res.send({
-          totalRevenue,
-          totalAppointments,
-          totalPayments // Add totalPayments to the response
-        });
-      } catch (error) {
-        res.status(500).send({ message: "Error fetching dashboard stats", error: error.message });
-      }
-    });
+    res.json(stats);
+  } catch (error) {
+    console.error("Error fetching dashboard stats:", error);
+    res.status(500).send({ message: "Server error" });
+  }
+});
+
     app.get('/revenue-per-treatment', async (req, res) => {
       try {
         const revenueData = await paymentCollection.aggregate([
@@ -383,6 +389,26 @@ async function run() {
         res.status(500).send({ message: "Error calculating revenue", error: error.message });
       }
     });
+    // Backend: add this endpoint to your Express server (e.g. below your other payment endpoints)
+// AFTER you create paymentCollection, but BEFORE app.listen(...)
+app.get('/user-total-purchases', async (req, res) => {
+  try {
+    const pipeline = [
+      { $group: { _id: "$email", totalPurchase: { $sum: { $toDouble: "$price" } } } },
+      { $project: { _id: 0, email: "$_id", totalPurchase: 1 } }
+    ];
+    const results = await paymentCollection.aggregate(pipeline).toArray();
+    res.json(results);
+  } catch (err) {
+    console.error("Error fetching user totals:", err);
+    res.status(500).json({ message: "Failed to fetch user totals" });
+  }
+});
+
+
+    
+    
+    
     
 
 
