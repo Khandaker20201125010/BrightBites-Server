@@ -35,6 +35,7 @@ async function run() {
     const bookingsCollection = client.db('BrightBites').collection('bookings');
     const paymentCollection = client.db('BrightBites').collection('payments');
     const reviewsCollection = client.db('BrightBites').collection('reviews');
+    const emailCollection = client.db('BrightBites').collection('emails');
     //jwt related api
     app.post('/jwt', async (req, res) => {
       const user = req.body;
@@ -81,7 +82,7 @@ async function run() {
     })
     app.post('/users', async (req, res) => {
       const user = req.body;
-      
+
       const query = { email: user.email }
       const existsUser = await usersCollection.findOne(query);
       if (existsUser) {
@@ -188,38 +189,38 @@ async function run() {
     app.post('/bookings', async (req, res) => {
       try {
         const booking = req.body;
-    
+
         // Check if the user already booked this slot
         const query = {
           appointmentDate: booking.appointmentDate,
           email: booking.email,
           treatment: booking.treatment,  // This should match the field in the frontend
         };
-    
+
         const alreadyBooked = await bookingsCollection.find(query).toArray();
         if (alreadyBooked.length) {
           return res.send({ acknowledged: false, message: `You already have a booking on ${booking.appointmentDate}` });
         }
-    
+
         // Insert new booking
         const result = await bookingsCollection.insertOne(booking);
-    
+
         // Correct: Find the appointment by the 'appointment' field, not 'name'
         const filter = { appointment: booking.treatment };  // Using 'appointment' instead of 'name'
         const updateDoc = {
           $pull: { slots: booking.slot },  // Remove the booked slot
         };
-    
+
         // Update the appointment document to remove the booked slot
         await appointmentCollection.updateOne(filter, updateDoc);
-    
+
         res.send(result);
       } catch (error) {
         console.error("Booking Error:", error);
         res.status(500).send({ message: "Internal server error" });
       }
     });
-    
+
 
     app.get("/reviews", async (req, res) => {
       try {
@@ -337,36 +338,36 @@ async function run() {
       }
     });
 
-// Add the aggregate pipeline for total revenue, total appointments, and total payments
-app.get('/dashboard-stats', async (req, res) => {
-  try {
-    const [revenueResult, totalAppointments, totalPayments] = await Promise.all([
-      paymentCollection.aggregate([
-        {
-          $group: {
-            _id: null,
-            totalRevenue: { $sum: { $toDouble: "$price" } } // Sum up the price field for total revenue
-          }
-        }
-      ]).toArray(),
-      
-      appointmentCollection.countDocuments({}), // Get total number of appointments
-      paymentCollection.countDocuments({ status: 'paid' }) // Get total number of paid appointments
-    ]);
+    // Add the aggregate pipeline for total revenue, total appointments, and total payments
+    app.get('/dashboard-stats', async (req, res) => {
+      try {
+        const [revenueResult, totalAppointments, totalPayments] = await Promise.all([
+          paymentCollection.aggregate([
+            {
+              $group: {
+                _id: null,
+                totalRevenue: { $sum: { $toDouble: "$price" } } // Sum up the price field for total revenue
+              }
+            }
+          ]).toArray(),
 
-    const totalRevenue = revenueResult[0]?.totalRevenue || 0;
-    const stats = {
-      totalRevenue,
-      totalAppointments: totalAppointments,
-      totalPayments: totalPayments
-    };
+          appointmentCollection.countDocuments({}), // Get total number of appointments
+          paymentCollection.countDocuments({ status: 'paid' }) // Get total number of paid appointments
+        ]);
 
-    res.json(stats);
-  } catch (error) {
-    console.error("Error fetching dashboard stats:", error);
-    res.status(500).send({ message: "Server error" });
-  }
-});
+        const totalRevenue = revenueResult[0]?.totalRevenue || 0;
+        const stats = {
+          totalRevenue,
+          totalAppointments: totalAppointments,
+          totalPayments: totalPayments
+        };
+
+        res.json(stats);
+      } catch (error) {
+        console.error("Error fetching dashboard stats:", error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
 
     app.get('/revenue-per-treatment', async (req, res) => {
       try {
@@ -382,7 +383,7 @@ app.get('/dashboard-stats', async (req, res) => {
             $sort: { totalRevenue: -1 } // Optional: Sort by total revenue, descending
           }
         ]).toArray();
-    
+
         res.send(revenueData); // Send the revenue data for each treatment
       } catch (error) {
         console.error("Error calculating revenue:", error);
@@ -390,26 +391,51 @@ app.get('/dashboard-stats', async (req, res) => {
       }
     });
     // Backend: add this endpoint to your Express server (e.g. below your other payment endpoints)
-// AFTER you create paymentCollection, but BEFORE app.listen(...)
-app.get('/user-total-purchases', async (req, res) => {
-  try {
-    const pipeline = [
-      { $group: { _id: "$email", totalPurchase: { $sum: { $toDouble: "$price" } } } },
-      { $project: { _id: 0, email: "$_id", totalPurchase: 1 } }
-    ];
-    const results = await paymentCollection.aggregate(pipeline).toArray();
-    res.json(results);
-  } catch (err) {
-    console.error("Error fetching user totals:", err);
-    res.status(500).json({ message: "Failed to fetch user totals" });
-  }
-});
+    // AFTER you create paymentCollection, but BEFORE app.listen(...)
+    app.get('/user-total-purchases', async (req, res) => {
+      try {
+        const pipeline = [
+          { $group: { _id: "$email", totalPurchase: { $sum: { $toDouble: "$price" } } } },
+          { $project: { _id: 0, email: "$_id", totalPurchase: 1 } }
+        ];
+        const results = await paymentCollection.aggregate(pipeline).toArray();
+        res.json(results);
+      } catch (err) {
+        console.error("Error fetching user totals:", err);
+        res.status(500).json({ message: "Failed to fetch user totals" });
+      }
+    });
+    app.get('/contact', async (req, res) => {
+      const result = await emailCollection.find().toArray();
+      res.send(result)
+    })
+    app.post('/contact', async (req, res) => {
+      try {
+        const { email, subject, message } = req.body;
+    
+        if (!email || !subject || !message) {
+          return res.status(400).json({ success: false, message: "All fields are required." });
+        }
+    
+        const contactMessage = {
+          email,
+          subject,
+          message,
+          createdAt: new Date()
+        };
+    
+        const result = await emailCollection.insertOne(contactMessage);
+        res.status(201).json({ success: true, message: "Message sent successfully", id: result.insertedId });
+      } catch (error) {
+        console.error("Error saving contact message:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+      }
+    });
 
 
-    
-    
-    
-    
+
+
+
 
 
 
